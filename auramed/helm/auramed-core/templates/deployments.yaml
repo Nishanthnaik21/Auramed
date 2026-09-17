@@ -1,0 +1,240 @@
+# ==============================================================================
+# AuraMed Microservices Deployments (Production Hardened)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Rust Ingestion Gateway Deployment
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auramed-ingestion-gateway
+  labels:
+    app.kubernetes.io/name: auramed-ingestion-gateway
+    app.kubernetes.io/tier: edge-gateway
+spec:
+  replicas: {{ .Values.gateway.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-ingestion-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auramed-ingestion-gateway
+        app.kubernetes.io/tier: edge-gateway
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SERVER_HOST
+              value: "0.0.0.0"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: KAFKA_BROKERS
+              value: {{ .Values.gateway.env.KAFKA_BROKERS | quote }}
+            - name: TOPIC_DISPENSE
+              value: {{ .Values.gateway.env.TOPIC_DISPENSE | quote }}
+            - name: TOPIC_OBSERVATIONS
+              value: {{ .Values.gateway.env.TOPIC_OBSERVATIONS | quote }}
+            - name: TOPIC_ENCOUNTERS
+              value: {{ .Values.gateway.env.TOPIC_ENCOUNTERS | quote }}
+            - name: AURAMED_MASTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auramed-security-credentials
+                  key: master-secret
+            - name: AURAMED_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: auramed-security-credentials
+                  key: salt
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+---
+# ------------------------------------------------------------------------------
+# 2. Apache Flink Streaming JobManager
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auramed-flink-jobmanager
+  labels:
+    app.kubernetes.io/name: auramed-flink-jobmanager
+    app.kubernetes.io/tier: stream-processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-flink-jobmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auramed-flink-jobmanager
+        app.kubernetes.io/tier: stream-processing
+    spec:
+      containers:
+        - name: jobmanager
+          image: "{{ .Values.flink.image.repository }}:{{ .Values.flink.image.tag }}"
+          args: ["jobmanager"]
+          ports:
+            - containerPort: 8081
+              name: web
+            - containerPort: 6123
+              name: rpc
+          resources:
+            {{- toYaml .Values.flink.jobmanager.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /overview
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 15
+---
+# ------------------------------------------------------------------------------
+# 3. Apache Flink Streaming TaskManager
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auramed-flink-taskmanager
+  labels:
+    app.kubernetes.io/name: auramed-flink-taskmanager
+    app.kubernetes.io/tier: stream-processing
+spec:
+  replicas: {{ .Values.flink.taskmanager.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-flink-taskmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auramed-flink-taskmanager
+        app.kubernetes.io/tier: stream-processing
+    spec:
+      containers:
+        - name: taskmanager
+          image: "{{ .Values.flink.image.repository }}:{{ .Values.flink.image.tag }}"
+          args: ["taskmanager"]
+          ports:
+            - containerPort: 6122
+              name: rpc
+          resources:
+            {{- toYaml .Values.flink.taskmanager.resources | nindent 12 }}
+---
+# ------------------------------------------------------------------------------
+# 4. Triton Inference Server Deployment
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auramed-triton-server
+  labels:
+    app.kubernetes.io/name: auramed-triton-server
+    app.kubernetes.io/tier: ml-inference
+spec:
+  replicas: {{ .Values.triton.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-triton-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auramed-triton-server
+        app.kubernetes.io/tier: ml-inference
+    spec:
+      containers:
+        - name: tritonserver
+          image: "{{ .Values.triton.image.repository }}:{{ .Values.triton.image.tag }}"
+          args: ["tritonserver", "--model-repository=/models", "--strict-model-config=false"]
+          ports:
+            - containerPort: 8000
+              name: http
+            - containerPort: 8001
+              name: grpc
+            - containerPort: 8002
+              name: metrics
+          resources:
+            {{- toYaml .Values.triton.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /v2/health/live
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# ------------------------------------------------------------------------------
+# 5. FastAPI CDS Hooks Microservice
+# ------------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auramed-cds-hooks
+  labels:
+    app.kubernetes.io/name: auramed-cds-hooks
+    app.kubernetes.io/tier: clinical-decision-support
+spec:
+  replicas: {{ .Values.cdsHooks.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-cds-hooks
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auramed-cds-hooks
+        app.kubernetes.io/tier: clinical-decision-support
+    spec:
+      containers:
+        - name: cds-hooks
+          image: "{{ .Values.cdsHooks.image.repository }}:{{ .Values.cdsHooks.image.tag }}"
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.cdsHooks.env.REDIS_HOST | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.cdsHooks.env.REDIS_PORT | quote }}
+          resources:
+            {{- toYaml .Values.cdsHooks.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

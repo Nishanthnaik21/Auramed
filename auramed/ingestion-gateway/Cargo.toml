@@ -1,0 +1,25 @@
+[package]
+name = "auramed-ingestion-gateway"
+version = "0.1.0"
+edition = "2021"
+authors = ["AuraMed Systems Engineering"]
+description = "High-throughput edge ingestion gateway with deterministic PHI de-identification and Kafka routing"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros", "json"] }
+tokio = { version = "1.37", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rdkafka = { version = "0.36", default-features = false, features = ["tokio"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+
+[dev-dependencies]
+tokio-test = "0.4"

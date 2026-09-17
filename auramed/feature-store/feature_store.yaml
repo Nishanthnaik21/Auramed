@@ -1,0 +1,24 @@
+# Feast Feature Store Configuration for Project AuraMed
+# Integrates Redis as the low-latency Online Feature Store
+# and Apache Iceberg on AWS S3 / MinIO as the Offline Feature Store
+
+project: auramed
+registry: data/registry.db
+provider: local
+
+# Low-latency Online Store for Real-Time Inference & Reasoning
+online_store:
+  type: redis
+  connection_string: redis://localhost:6379
+  key_ttl: 15552000 # 180 days in seconds
+  connection_timeout: 5 # seconds
+  max_connections: 50
+
+# Offline Store for Historical Training Data & Feature Logging
+offline_store:
+  type: file
+  # Supports Parquet/Iceberg historical logs emitted by Apache Flink
+  s3_endpoint_override: "http://localhost:9000"
+
+flags:
+  alpha_features: false

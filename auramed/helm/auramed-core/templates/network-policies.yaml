@@ -1,0 +1,137 @@
+# ==============================================================================
+# Calico / Kubernetes Zero-Trust NetworkPolicies
+# Strictly isolates the Token Identity Vault from ML Inference (Triton) & CDS
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Default Deny-All (Zero-Trust Baseline)
+# ------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# ------------------------------------------------------------------------------
+# 2. Allow Essential Core DNS Resolution
+# ------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-dns-egress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# ------------------------------------------------------------------------------
+# 3. Rust Ingestion Gateway Network Policy
+# ------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-ingestion-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Inbound from AWS ALB Ingress Controller
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Outbound to MSK Kafka brokers on port 9094 (TLS)
+    - ports:
+        - protocol: TCP
+          port: 9094
+    # Outbound to Air-Gapped RDS Token Identity Vault on port 5432
+    - ports:
+        - protocol: TCP
+          port: 5432
+---
+# ------------------------------------------------------------------------------
+# 4. Strict Isolation: Block ML Inference (Triton) from Token Identity Vault
+# ------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: triton-strict-isolation-policy
+  annotations:
+    security.auramed.health/zero-phi: "Triton is cryptographically isolated from cleartext identifiers"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-triton-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Inbound ONLY from CDS Hooks Service
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: auramed-cds-hooks
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8001
+  egress:
+    # STRICT ZERO-EGRESS TO POSTGRES / IDENTITY VAULT (Port 5432 explicitly omitted)
+    # Allows internal health checks / local socket only
+    []
+---
+# ------------------------------------------------------------------------------
+# 5. CDS Hooks Service Network Policy
+# ------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cds-hooks-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auramed-cds-hooks
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Inbound from Ingress on port 8080
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Egress to ElastiCache Redis (Feast Online Store) on port 6379
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # Egress to Triton Server on port 8000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: auramed-triton-server
+      ports:
+        - protocol: TCP
+          port: 8000
+    # ZERO EGRESS TO RDS IDENTITY VAULT (Port 5432 omitted)

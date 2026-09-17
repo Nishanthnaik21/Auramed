@@ -1,0 +1,92 @@
+name: "auramed_ensemble"
+backend: "python"
+max_batch_size: 64
+
+# ------------------------------------------------------------------------------
+# Input Tensors
+# ------------------------------------------------------------------------------
+
+input [
+  {
+    name: "PATIENT_DOSES"
+    data_type: TYPE_FP32
+    dims: [ -1, 2 ] # Variable number of doses: [time_hours, dose_mg]
+  },
+  {
+    name: "LAB_MEASUREMENTS"
+    data_type: TYPE_FP32
+    dims: [ -1, 2 ] # Variable number of lab readings: [time_hours, measured_value]
+  },
+  {
+    name: "GRAPH_NODES"
+    data_type: TYPE_FP32
+    dims: [ -1, 16 ] # Dynamic medication/condition graph nodes: [num_nodes, in_features]
+  },
+  {
+    name: "GRAPH_EDGES"
+    data_type: TYPE_INT64
+    dims: [ 2, -1 ] # Adjacency index: [2, num_edges]
+  },
+  {
+    name: "TELEMETRY_FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, 8 ] # Time-series telemetry sequence: [seq_len, 8]
+  }
+]
+
+# ------------------------------------------------------------------------------
+# Output Tensors
+# ------------------------------------------------------------------------------
+
+output [
+  {
+    name: "PREDICTED_CLASS"
+    data_type: TYPE_STRING
+    dims: [ 1 ] # "Concordant", "Intermittent", "Abandoned", or "INDETERMINATE"
+  },
+  {
+    name: "CONFORMAL_SET"
+    data_type: TYPE_STRING
+    dims: [ -1 ] # Variable-size conformal prediction set
+  },
+  {
+    name: "IS_INDETERMINATE"
+    data_type: TYPE_BOOL
+    dims: [ 1 ] # True if alert safely suppressed
+  },
+  {
+    name: "MAHALANOBIS_DIVERGENCE"
+    data_type: TYPE_FP32
+    dims: [ 1 ] # Pharmacokinetic residual divergence r(t)
+  },
+  {
+    name: "PREDICTED_BIOMARKER"
+    data_type: TYPE_FP32
+    dims: [ 1 ] # UKF counterfactual biomarker level ŷ(t)
+  },
+  {
+    name: "PREDICTED_PROBABILITIES"
+    data_type: TYPE_FP32
+    dims: [ 3 ] # Calibrated probabilities for [Concordant, Intermittent, Abandoned]
+  }
+]
+
+# ------------------------------------------------------------------------------
+# Dynamic Batching Configuration (Sub-5ms SLA)
+# ------------------------------------------------------------------------------
+
+dynamic_batching {
+  max_queue_delay_microseconds: 5000
+  preferred_batch_size: [ 8, 16, 32, 64 ]
+}
+
+# ------------------------------------------------------------------------------
+# Concurrency & Resource Allocation
+# ------------------------------------------------------------------------------
+
+instance_group [
+  {
+    count: 2
+    kind: KIND_CPU
+  }
+]

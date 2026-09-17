@@ -1,0 +1,111 @@
+global:
+  environment: production
+  domain: api.auramed.health
+  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+# 1. Rust Ingestion Gateway
+gateway:
+  replicaCount: 3
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/auramed/ingestion-gateway
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "1Gi"
+    limits:
+      cpu: "4000m"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+    targetCPUUtilizationPercentage: 70
+  env:
+    KAFKA_BROKERS: "auramed-production-msk.auramed.internal:9094"
+    TOPIC_DISPENSE: "telemetry.claims.dispense"
+    TOPIC_OBSERVATIONS: "telemetry.clinical.observations"
+    TOPIC_ENCOUNTERS: "telemetry.clinical.encounters"
+
+# 2. Apache Flink Streaming Engine
+flink:
+  jobmanager:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: "2000m"
+        memory: "4Gi"
+      limits:
+        cpu: "4000m"
+        memory: "8Gi"
+  taskmanager:
+    replicaCount: 4
+    resources:
+      requests:
+        cpu: "2000m"
+        memory: "8Gi"
+      limits:
+        cpu: "8000m"
+        memory: "16Gi"
+    autoscaling:
+      enabled: true
+      minReplicas: 4
+      maxReplicas: 16
+      targetCPUUtilizationPercentage: 75
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/auramed/streaming-job
+    tag: "1.0.0"
+
+# 3. Triton Inference Server
+triton:
+  replicaCount: 2
+  image:
+    repository: nvcr.io/nvidia/tritonserver
+    tag: "24.03-py3"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "4000m"
+      memory: "8Gi"
+    limits:
+      cpu: "8000m"
+      memory: "16Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+# 4. FastAPI CDS Hooks Microservice
+cdsHooks:
+  replicaCount: 2
+  image:
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/auramed/cds-hooks
+    tag: "1.0.0"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+  env:
+    REDIS_HOST: "auramed-redis.auramed.internal"
+    REDIS_PORT: 6379
+
+# Ingress & mTLS
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/mutual-authentication: '{"mode":"verify","trustStoreArn":"arn:aws:elasticloadbalancing:us-east-1:123456789012:truststore/auramed-mtls/12345"}'
